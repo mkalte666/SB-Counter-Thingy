@@ -1,0 +1,63 @@
+#!/bin/bash
+urldecode() {
+    # urldecode <string>
+
+    local url_encoded="${1//+/ }"
+    printf '%b' "${url_encoded//%/\\x}"
+}
+
+if (($# < 3)); then 
+    echo "Usage: count <thread-base-url> <start-page> <end-page>"
+    echo "end page should be in 10 increments"
+    echo "example: ./count https://forums.spacebattles.com/threads/pok%C3%A9mon-fanfiction-ideas-recs-and-discussion-thread.289307/ 1 100 "
+    exit 1
+fi
+
+rm -rf ./dl 
+mkdir -p dl 
+rm -f links.csv
+rm -f links.txt
+
+echo "Polling \"$1\"; pages $2 - $3; will pre-parse here"
+
+urlNoSlash=${1%/}
+
+for blob in `seq $2 10 $3`
+do
+    for i in `seq $blob 1 $(($blob + 9))` ; do
+        echo "Fetching and Parsing $urlNoSlash/page-$i..."
+        wget -q -U googlebot -O - "$urlNoSlash/page-$i" | awk '/article/,/<\/article/' | egrep -o 'https?://[^ <>"]+' >> "dl/page-$i" &
+        sleep .1
+    done
+    wait
+    sleep 1
+done
+
+echo "merging and cleaning urls"
+for f in $(find dl/ -name page-\*); do
+    cat $f >> dl/list 
+done
+cat dl/list | awk -niord '{printf RT?$0chr("0x"substr(RT,2)):$0}' RS=%.. | sed "s/#.*//g" > dl/clean1
+#    while read p; do 
+#        echo -e "$(urldecode ${p%/} | sed "s/#.*//g")" >> dl/clean1 
+#    done <$f
+#done
+cp -rf dl/clean1 dl/list
+
+echo "Removing blacklist keywords and self references" 
+# self reference
+selfDecoded=$(echo $urlNoSlash | awk -niord '{printf RT?$0chr("0x"substr(RT,2)):$0}' RS=%.. | sed "s/#.*//g")
+grep -v "$selfDecoded" dl/list > dl/clean2
+mv dl/clean2 dl/list 
+#  blacklist
+while read p; do 
+    grep -v "$p" dl/list > dl/clean2
+    mv dl/clean2 dl/list
+done < blacklist.txt
+
+echo "Generating list"
+cat dl/list | sort | uniq -c | sort -g -r > links.txt 
+echo "Generating csv"
+sed "s/\s*\([0-9]\) /\1; /g" links.txt > links.csv
+echo "Cleanup"
+#rm -rf ./dl 
